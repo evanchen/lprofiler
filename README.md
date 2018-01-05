@@ -1,0 +1,2 @@
+# lprofiler
+simple lua profile
