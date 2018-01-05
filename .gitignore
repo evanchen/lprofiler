@@ -30,3 +30,14 @@
 *.exe
 *.out
 *.app
+
+*.log
+*.vcxproj
+*.filters
+*.user
+*.opendb
+*.db
+
+.vs/
+Debug/
+lprofiler/Debug/
