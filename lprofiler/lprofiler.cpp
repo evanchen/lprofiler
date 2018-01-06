@@ -4,9 +4,14 @@
 #include<assert.h>
 #include<algorithm>
 #include<functional>
+#ifdef _WIN32
 #include<direct.h>
+#include <windows.h>
+#endif
+#include<string.h>
 
-#ifdef _WIN32_
+
+#ifdef _WIN32
 int gettimeofday(struct timeval *tv, void *tzp)
 {
 	time_t clock;
@@ -22,7 +27,7 @@ int gettimeofday(struct timeval *tv, void *tzp)
 	tm.tm_sec = wtm.wSecond;
 	tm.tm_isdst = -1;
 	clock = mktime(&tm);
-	tv->tv_sec = clock;
+	tv->tv_sec = (long)clock;
 	tv->tv_usec = wtm.wMilliseconds * 1000;
 
 	return (0);
@@ -42,14 +47,14 @@ void prevent_funcs() {
 		"_prof_start",
 		"_prof_stop",
 		"_prof_dump",
-		//"test_func4",
 	};
-	for (int i = 0; i < sizeof(f) / sizeof(const char*); i++) {
+	for (size_t i = 0; i < sizeof(f) / sizeof(const char*); i++) {
 		mapNames[ f[i] ] = true;
 	}
 }
 
 bool checkPrevent(const char* funcName) {
+	printf("[checkPrevent]: %s\n",funcName);
 	for (auto it = mapNames.begin(); it != mapNames.end(); it++) {
 		if (strcmp(it->first, funcName) == 0) {
 			return true;
@@ -83,6 +88,9 @@ bool cmp_time(profileInfo* obj1, profileInfo* obj2) {
 	return obj1->time > obj2->time;
 }
 
+bool cmp_avg(profileInfo* obj1, profileInfo* obj2) {
+	return obj1->timePerCall > obj2->timePerCall;
+}
 
 //event: LUA_HOOKCALL, LUA_HOOKRET, LUA_HOOKTAILCALL, LUA_HOOKLINE, and LUA_HOOKCOUNT
 static void profile_hook(lua_State *L, lua_Debug *ar) {
@@ -93,25 +101,27 @@ static void profile_hook(lua_State *L, lua_Debug *ar) {
 
 	bool is_prevent = false;
 	lua_getinfo(L, "nSl", ar); //current call info
-	if (ar->name && checkPrevent(ar->name)) { //this call is to prevent checking
-		is_prevent = true;
-	}
+	//:TODO:去掉过滤
+	//if (ar->name && checkPrevent(ar->name)) { //this call is to prevent checking
+	//	is_prevent = true;
+	//}
 
 	profileInfo* lastest = nullptr;
 	if (g_allv.size() > 0) {
 		lastest = g_allv.back();
-		if (lastest->prevent) {
-			is_prevent = true;
-		}
+		//:TODO:去掉过滤
+		//if (lastest->prevent) {
+		//	is_prevent = true;
+		//}
 	}
 
 	if (ar->event == LUA_HOOKCALL) {
-		if (ar->name) {
-			printf("call: %s\n", ar->name);
-		}
-		else {
-			printf("call: unknow\n");
-		}
+		//if (ar->name) {
+		//	printf("call: %s\n", ar->name);
+		//}
+		//else {
+		//	printf("call: unknow\n");
+		//}
 
 		//ukey
 		char idstr[2048] = { '\0' };
@@ -137,21 +147,22 @@ static void profile_hook(lua_State *L, lua_Debug *ar) {
 		}
 	}
 	else if (ar->event == LUA_HOOKRET) { // calculate time spent
-		if (ar->name) {
-			printf("return: %s\n", ar->name);
-		}
-		else {
-			printf("return: unknow\n");
-		}
+		//if (ar->name) {
+		//	printf("return: %s\n", ar->name);
+		//}
+		//else {
+		//	printf("return: unknow\n");
+		//}
 		profileInfo* curInfo = lastest;
 		if (!curInfo) { //this is a return hook, the lastest node must exist
 			return;
 		}
 		curInfo->time = getSec() - curInfo->time;
-		if (!curInfo->prevent) {
-			saveRecord(curInfo);
-		}
-
+		//:TODO:去掉过滤
+		//if (!curInfo->prevent) {
+		//	saveRecord(curInfo);
+		//}
+		saveRecord(curInfo);
 		//'return' release call info
 		g_allv.pop_back();
 		delete curInfo;
@@ -190,12 +201,21 @@ static int profile_stop(lua_State* L) {
 	return 0;
 }
 
+static int profile_cleanup(lua_State* L) {
+	if (is_running) return 0;
+	clear_allm();
+	clear_allv();
+	is_running = false;
+	return 0;
+}
+
 static int profile_dump(lua_State* L) {
 	if (is_running) return 0;
 
-	const char* dumpType = lua_tostring(L, 1);
+	const char* fpath = lua_tostring(L, 1);
+	const char* dumpType = lua_tostring(L, 2);
 	if (!dumpType) {
-		printf("dump type : count or time ?\n");
+		printf("dump type : count or time or avg ?\n");
 		return 0;
 	}
 	int t = 0;
@@ -205,16 +225,21 @@ static int profile_dump(lua_State* L) {
 	else if (strcmp(dumpType, "time") == 0) {
 		t = 2;
 	}
-	else {
-		printf("dump type : count or time ?\n");
+	else if (strcmp(dumpType, "avg") == 0) {
+		t = 3;
+	} else {
+		printf("dump type : count or time or avg ?\n");
 		return 0;
 	}
 
-	const char* fname = "prof.log";
-	FILE* fh = fopen(fname, "w");
+	FILE* fh = fopen(fpath, "w");
+	if (!fh) return 0;
 	std::vector<profileInfo*> vecp;
 	for (auto it = g_allm.begin(); it != g_allm.end(); it++) {
 		vecp.push_back(it->second);
+		if (it->second->count > 0) {
+			it->second->timePerCall = it->second->time / it->second->count;
+		}
 	}
 	clear_allv();
 
@@ -222,8 +247,11 @@ static int profile_dump(lua_State* L) {
 	if (t == 1) {
 		std::sort(vecp.begin(), vecp.end(), cmp_count);
 	}
-	else {
+	else if (t == 2) {
 		std::sort(vecp.begin(), vecp.end(), cmp_time);
+	}
+	else {
+		std::sort(vecp.begin(), vecp.end(), cmp_avg);
 	}
 
 	fprintf(fh, "***************************** profile info: sort type: %s *****************************\n\n",dumpType);
@@ -234,8 +262,15 @@ static int profile_dump(lua_State* L) {
 		if (t == 1) {
 			fprintf(fh, "count: %lld\n", p->count);
 			fprintf(fh, "time: %f\n", p->time);
+			fprintf(fh, "timePerCall: %f\n", p->timePerCall);
+		}
+		else if (t == 2) {
+			fprintf(fh, "time: %f\n", p->time);
+			fprintf(fh, "count: %lld\n", p->count);
+			fprintf(fh, "timePerCall: %f\n", p->timePerCall);
 		}
 		else {
+			fprintf(fh, "timePerCall: %f\n", p->timePerCall);
 			fprintf(fh, "time: %f\n", p->time);
 			fprintf(fh, "count: %lld\n", p->count);
 		}
@@ -247,17 +282,16 @@ static int profile_dump(lua_State* L) {
 		}
 	}
 
-	clear_allm();
-
 	fclose(fh);
 	return 0;
 }
 
-LUAMOD_API int luaopen_lprofiler(lua_State *L) {
+int luaopen_lprofiler(lua_State *L) {
 	luaL_Reg l[] = {
 		{ "_prof_start",	profile_start	},
 		{ "_prof_stop",		profile_stop	},
 		{ "_prof_dump",		profile_dump	},
+		{ "_prof_cleanup",	profile_cleanup },
 		{ NULL,				NULL			},
 	};
 	luaL_newlib(L, l);

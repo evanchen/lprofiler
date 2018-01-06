@@ -1,18 +1,21 @@
 #pragma once
-
-extern "C" {
-#include "lua.h"
-#include "lualib.h"
-#include "lauxlib.h"
-}
+#include "lua.hpp"
 #include<string>
 #include<map>
 #include<vector>
+#include<time.h>
+#ifdef _WIN32
+#include <windows.h>
+int gettimeofday(struct timeval *tv, void *tzp);
+#else
+#include <sys/time.h>
+#endif
+
+typedef long long int64;
 
 struct profileInfo;
 
 
-typedef long long int64;
 typedef std::map<std::string, profileInfo*> pmap;
 typedef std::vector<profileInfo*> pvec;
 typedef std::map<std::string, bool> mapChildIdstr;
@@ -21,6 +24,7 @@ struct profileInfo {
 	std::string func_idstr;
 	int64 count;
 	double time;
+	double timePerCall;
 	bool prevent;
 	mapChildIdstr mapChildIds;
 
@@ -28,17 +32,10 @@ struct profileInfo {
 		func_idstr(str),
 		count(0),
 		time(0),
+		timePerCall(0),
 		prevent(false) {
 
 	}
 };
 
-LUAMOD_API int luaopen_lprofiler(lua_State *L);
-
-#	include<time.h>
-#ifdef _WIN32_
-#   include <windows.h>
-int gettimeofday(struct timeval *tv, void *tzp);
-#else
-#   include <sys/time.h>
-#endif
+int luaopen_lprofiler(lua_State *L);

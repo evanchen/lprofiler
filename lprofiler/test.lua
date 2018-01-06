@@ -1,6 +1,6 @@
 
 function test_func0(x,y)
-	print("11111",x,y)
+	--print("11111",x,y)
 end 
 
 function test_func1(a,b)
@@ -15,7 +15,7 @@ end
 local function test_func3(e,f,g)
 	local x = e + f
 	local y = f + g
-	print("2222",x,y)
+	--print("2222",x,y)
 	return x,y
 end 
 
@@ -34,3 +34,4 @@ test_func2(11,22)
 
 lprof._prof_stop()
 lprof._prof_dump("time")
+lprof._prof_cleanup()
